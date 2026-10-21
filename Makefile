@@ -34,7 +34,7 @@ test:
 ## build: Build the Go binary for the current OS/Architecture
 build:
 	@mkdir -p $(BUILD_DIR)
-	@go build -ldflags "-X main.Version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) cmd/main.go
+	@go build -ldflags "-X main.Version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) cmd/tiny-coder/main.go
 
 ## clean: Remove build artifacts
 clean:
