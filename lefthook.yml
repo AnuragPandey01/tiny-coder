@@ -4,7 +4,7 @@ pre-commit:
     fmt:
       glob: "*.go"
       stage_fixed: true
-      run: go fmt {staged_files}
+      run: go fmt ./...
     vet:
       glob: "*.go"
-      run: go vet {staged_files}
+      run: go vet ./...
