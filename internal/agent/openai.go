@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
+	"sync"
 
 	"github.com/anuragpandey01/tiny-coder/internal/agent/tools"
 	"github.com/openai/openai-go/v3"
@@ -15,8 +17,10 @@ import (
 
 // OpenAI runs an agent loop against an OpenAI-compatible Responses API.
 type OpenAI struct {
-	client openai.Client
-	model  string
+	client  openai.Client
+	model   string
+	mu      sync.Mutex
+	history []responses.ResponseInputItemUnionParam
 }
 
 // NewOpenAI creates an agent backed by the local Ollama-compatible endpoint.
@@ -34,12 +38,14 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
+		a.mu.Lock()
+		defer a.mu.Unlock()
 		slog.Debug("agent is thinking...", "model", a.model, "prompt_length", len(prompt))
 
 		ctx := context.Background()
-		inputItems := []responses.ResponseInputItemUnionParam{
+		a.history = append(a.history,
 			responses.ResponseInputItemParamOfMessage(prompt, responses.EasyInputMessageRoleUser),
-		}
+		)
 
 		//all tools available to the agent
 		availableTools := []tools.Tool{tools.RunCommandTool{}}
@@ -54,7 +60,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 		for {
 			params := responses.ResponseNewParams{
 				Model: a.model,
-				Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
+				Input: responses.ResponseNewParamsInputUnion{OfInputItemList: a.history},
 				Tools: toolsDef,
 			}
 
@@ -62,12 +68,14 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 
 			// a map to collect all tool calls
 			toolCalls := make(map[int64]*responses.ResponseFunctionToolCall)
+			var responseText strings.Builder
 
 			for stream.Next() {
 				e := stream.Current()
 				switch e.Type {
 				case "response.output_text.delta":
 					ch <- e.Delta
+					responseText.WriteString(e.Delta)
 				case "response.output_item.done":
 					if e.Item.Type == "function_call" {
 						fc := e.Item.AsFunctionCall()
@@ -82,6 +90,11 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				return
 			}
 			_ = stream.Close()
+			if responseText.String() != "" {
+				a.history = append(a.history,
+					responses.ResponseInputItemParamOfMessage(responseText.String(), responses.EasyInputMessageRoleAssistant),
+				)
+			}
 
 			// if no tool calls, agent already gave the final answer, so return
 			if len(toolCalls) == 0 {
@@ -104,9 +117,9 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				//get the actual Tool interface implementing struct that owns this name
 				tool, ok := toolsByName[tc.Name]
 				if !ok {
-					// todo: consider logging this or/and sending this mistake to the agent
 					slog.Warn("unknown tool", "tool_name", tc.Name)
 					ch <- fmt.Sprintf("[unknown tool: %s]\n", tc.Name)
+					a.appendToolResult(tc, fmt.Sprintf(`{"error":"unknown tool: %s"}`, tc.Name))
 					continue
 				}
 
@@ -125,15 +138,19 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				}
 				slog.Debug("Tool Call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
 
-				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCall(tc.Arguments, tc.CallID, tc.Name))
-				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
-					OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
-						CallID: openai.String(tc.CallID),
-						Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: openai.String(outputStr)},
-					},
-				})
+				a.appendToolResult(tc, outputStr)
 			}
 		}
 	}()
 	return ch
+}
+
+func (a *OpenAI) appendToolResult(tc *responses.ResponseFunctionToolCall, output string) {
+	a.history = append(a.history, responses.ResponseInputItemParamOfFunctionCall(tc.Arguments, tc.CallID, tc.Name))
+	a.history = append(a.history, responses.ResponseInputItemUnionParam{
+		OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
+			CallID: openai.String(tc.CallID),
+			Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: openai.String(output)},
+		},
+	})
 }
