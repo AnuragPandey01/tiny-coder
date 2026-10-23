@@ -3,10 +3,55 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os/exec"
+
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/responses"
 )
+
+// RunCommandTool executes a program with separate arguments.
+type RunCommandTool struct{}
+
+func (RunCommandTool) Name() string { return "run_command" }
+
+func (RunCommandTool) Definition() responses.ToolUnionParam {
+	return responses.ToolUnionParam{OfFunction: &responses.FunctionToolParam{
+		Name:        RunCommandTool{}.Name(),
+		Description: openai.String("Execute a command in a specified working directory. Pass the executable and arguments separately; do not use shell syntax."),
+		Parameters: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"dir":  map[string]any{"type": "string", "description": "Working directory in which to execute the command."},
+				"name": map[string]any{"type": "string", "description": "Executable name, such as go, git, or ls."},
+				"args": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arguments passed to the executable as separate strings."},
+			},
+			"required": []string{"dir", "name", "args"},
+		},
+	}}
+}
+
+type runCommandArguments struct {
+	Dir  string   `json:"dir"`
+	Name string   `json:"name"`
+	Args []string `json:"args"`
+}
+
+func (RunCommandTool) Execute(ctx context.Context, rawArguments string) (any, error) {
+	var args runCommandArguments
+	if err := json.Unmarshal([]byte(rawArguments), &args); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if args.Name == "" {
+		return nil, fmt.Errorf("invalid arguments: name is required")
+	}
+	if args.Dir == "" {
+		args.Dir = "."
+	}
+	return RunCommand(ctx, args.Dir, args.Name, args.Args...)
+}
 
 type CommandResult struct {
 	Stdout   string `json:"stdout"`

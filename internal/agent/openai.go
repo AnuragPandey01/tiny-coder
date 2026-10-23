@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"slices"
-	"strings"
 
 	"github.com/anuragpandey01/tiny-coder/internal/agent/tools"
 	"github.com/openai/openai-go/v3"
@@ -30,12 +30,6 @@ func NewOpenAI() *OpenAI {
 	}
 }
 
-type runCommandArgs struct {
-	Dir  string   `json:"dir"`
-	Name string   `json:"name"`
-	Args []string `json:"args"`
-}
-
 func (a *OpenAI) Run(prompt string) <-chan string {
 	ch := make(chan string)
 	go func() {
@@ -45,21 +39,16 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 		inputItems := []responses.ResponseInputItemUnionParam{
 			responses.ResponseInputItemParamOfMessage(prompt, responses.EasyInputMessageRoleUser),
 		}
-		toolsDef := []responses.ToolUnionParam{{
-			OfFunction: &responses.FunctionToolParam{
-				Name:        "run_command",
-				Description: openai.String("Execute a command in a specified working directory. Pass the executable and arguments separately; do not use shell syntax."),
-				Parameters: map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"dir":  map[string]any{"type": "string", "description": "Working directory in which to execute the command."},
-						"name": map[string]any{"type": "string", "description": "Executable name, such as go, git, or ls."},
-						"args": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arguments passed to the executable as separate strings."},
-					},
-					"required": []string{"dir", "name", "args"},
-				},
-			},
-		}}
+
+		//all tools available to the agent
+		availableTools := []tools.Tool{tools.RunCommandTool{}}
+
+		toolsByName := make(map[string]tools.Tool, len(availableTools))
+		toolsDef := make([]responses.ToolUnionParam, 0, len(availableTools))
+		for _, tool := range availableTools {
+			toolsByName[tool.Name()] = tool
+			toolsDef = append(toolsDef, tool.Definition())
+		}
 
 		for {
 			params := responses.ResponseNewParams{
@@ -105,34 +94,31 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 			slices.Sort(indices)
 
 			for _, idx := range indices {
-				tc := toolCalls[idx]
-				if tc.Name != "run_command" {
-					continue
-				}
-				var cmdArgs runCommandArgs
-				if err := json.Unmarshal([]byte(tc.Arguments), &cmdArgs); err != nil {
-					ch <- fmt.Sprintf("[tool parse error: %v]\n", err) //todo: error can be passed to the agent
-					continue
-				}
-				dir := cmdArgs.Dir
-				if dir == "" {
-					dir = "."
-				}
-				cmdStr := cmdArgs.Name
-				if len(cmdArgs.Args) > 0 {
-					cmdStr += " " + strings.Join(cmdArgs.Args, " ")
-				}
-				ch <- fmt.Sprintf("[running: %s in %s...]\n\n", cmdStr, dir)
 
-				res, err := tools.RunCommand(ctx, dir, cmdArgs.Name, cmdArgs.Args...)
+				tc := toolCalls[idx]
+
+				//get the actual Tool interface implementing struct that owns this name
+				tool, ok := toolsByName[tc.Name]
+				if !ok {
+					// todo: consider logging this or/and sending this mistake to the agent
+					slog.Warn("unknown tool", "tool_name", tc.Name)
+					ch <- fmt.Sprintf("[unknown tool: %s]\n", tc.Name)
+					continue
+				}
+
+				ch <- fmt.Sprintf("[running tool: %s...]\n\n", tool.Name())
+
+				res, err := tool.Execute(ctx, tc.Arguments)
 				var outputStr string
 				if err != nil {
-					outBytes, _ := json.Marshal(map[string]any{"error": err.Error(), "stdout": res.Stdout, "stderr": res.Stderr, "exit_code": res.ExitCode})
+					slog.Error("tool execution failed", "tool_name", tc.Name, "error", err)
+					outBytes, _ := json.Marshal(map[string]any{"error": err.Error(), "result": res})
 					outputStr = string(outBytes)
 				} else {
 					outBytes, _ := json.Marshal(res)
 					outputStr = string(outBytes)
 				}
+
 				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCall(tc.Arguments, tc.CallID, tc.Name))
 				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
 					OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
