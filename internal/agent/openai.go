@@ -111,6 +111,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				}
 
 				ch <- fmt.Sprintf("[running tool: %s...]\n\n", tool.Name())
+				slog.Debug("Tool Call start", "tool_name", tc.Name, "call_id", tc.CallID, "args", tc.Arguments)
 
 				res, err := tool.Execute(ctx, tc.Arguments)
 				var outputStr string
@@ -122,7 +123,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 					outBytes, _ := json.Marshal(res)
 					outputStr = string(outBytes)
 				}
-				slog.Debug("tool call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
+				slog.Debug("Tool Call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
 
 				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCall(tc.Arguments, tc.CallID, tc.Name))
 				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
