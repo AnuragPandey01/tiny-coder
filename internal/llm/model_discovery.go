@@ -3,6 +3,8 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 )
 
@@ -13,7 +15,12 @@ func GetAvailableModels(client *http.Client) ([]Model, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get available models: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			slog.Error("failed to close response body", "err", err)
+		}
+	}(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
