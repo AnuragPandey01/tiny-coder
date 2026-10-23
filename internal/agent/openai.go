@@ -34,6 +34,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 	ch := make(chan string)
 	go func() {
 		defer close(ch)
+		slog.Debug("agent is thinking...", "model", a.model, "prompt_length", len(prompt))
 
 		ctx := context.Background()
 		inputItems := []responses.ResponseInputItemUnionParam{
@@ -76,6 +77,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 			}
 
 			if err := stream.Err(); err != nil {
+				slog.Error("response stream failed", "model", a.model, "error", err)
 				ch <- fmt.Sprintf("\n[stream error: %v]\n", err)
 				return
 			}
@@ -83,6 +85,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 
 			// if no tool calls, agent already gave the final answer, so return
 			if len(toolCalls) == 0 {
+				slog.Debug("agent finished answering", "model", a.model)
 				return
 			}
 
@@ -96,6 +99,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 			for _, idx := range indices {
 
 				tc := toolCalls[idx]
+				slog.Info("tool call received", "tool_name", tc.Name, "call_id", tc.CallID)
 
 				//get the actual Tool interface implementing struct that owns this name
 				tool, ok := toolsByName[tc.Name]
@@ -118,6 +122,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 					outBytes, _ := json.Marshal(res)
 					outputStr = string(outBytes)
 				}
+				slog.Debug("tool call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
 
 				inputItems = append(inputItems, responses.ResponseInputItemParamOfFunctionCall(tc.Arguments, tc.CallID, tc.Name))
 				inputItems = append(inputItems, responses.ResponseInputItemUnionParam{
