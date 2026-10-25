@@ -26,8 +26,9 @@ func main() {
 	}
 	slog.Info("TINY-CODER Started ＼(＾O＾)／ ")
 
-	coder := agent.NewOpenAI()
-	if err := tui.New(coder).Run(); err != nil {
+	agentRunner := agent.NewOpenAI()
+	app := tui.NewApp(agentRunner)
+	if err := app.Run(); err != nil {
 		slog.Error("application stopped with error", "error", err)
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

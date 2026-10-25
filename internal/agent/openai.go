@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/anuragpandey01/tiny-coder/internal/agent/events"
 	"github.com/anuragpandey01/tiny-coder/internal/agent/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -34,10 +35,11 @@ func NewOpenAI() *OpenAI {
 	}
 }
 
-func (a *OpenAI) Run(prompt string) <-chan string {
-	ch := make(chan string)
+func (a *OpenAI) Do(prompt string) <-chan events.Event {
+	eventStream := make(chan events.Event)
 	go func() {
-		defer close(ch)
+		defer close(eventStream)
+		defer func() { eventStream <- events.TurnFinished{} }()
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		slog.Debug("agent is thinking...", "model", a.model, "prompt_length", len(prompt))
@@ -74,7 +76,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				e := stream.Current()
 				switch e.Type {
 				case "response.output_text.delta":
-					ch <- e.Delta
+					eventStream <- events.TextDelta{Text: e.Delta}
 					responseText.WriteString(e.Delta)
 				case "response.output_item.done":
 					if e.Item.Type == "function_call" {
@@ -86,7 +88,7 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 
 			if err := stream.Err(); err != nil {
 				slog.Error("response stream failed", "model", a.model, "error", err)
-				ch <- fmt.Sprintf("\n[stream error: %v]\n", err)
+				eventStream <- events.Error{Error: err.Error()}
 				return
 			}
 			_ = stream.Close()
@@ -118,12 +120,12 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 				tool, ok := toolsByName[tc.Name]
 				if !ok {
 					slog.Warn("unknown tool", "tool_name", tc.Name)
-					ch <- fmt.Sprintf("[unknown tool: %s]\n", tc.Name)
+					eventStream <- events.Error{Error: fmt.Sprintf("unknown tool: %s", tc.Name)}
 					a.appendToolResult(tc, fmt.Sprintf(`{"error":"unknown tool: %s"}`, tc.Name))
 					continue
 				}
 
-				ch <- fmt.Sprintf("[running tool: %s...]\n\n", tool.Name())
+				eventStream <- events.ToolStarted{Name: tool.Name(), CallID: tc.CallID}
 				slog.Debug("Tool Call start", "tool_name", tc.Name, "call_id", tc.CallID, "args", tc.Arguments)
 
 				res, err := tool.Execute(ctx, tc.Arguments)
@@ -137,12 +139,20 @@ func (a *OpenAI) Run(prompt string) <-chan string {
 					outputStr = string(outBytes)
 				}
 				slog.Debug("Tool Call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
+				eventStream <- events.ToolFinished{Name: tc.Name, CallID: tc.CallID, Result: res, Error: errorString(err)}
 
 				a.appendToolResult(tc, outputStr)
 			}
 		}
 	}()
-	return ch
+	return eventStream
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func (a *OpenAI) appendToolResult(tc *responses.ResponseFunctionToolCall, output string) {
