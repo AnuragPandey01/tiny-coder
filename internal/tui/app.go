@@ -7,6 +7,7 @@ import (
 	"github.com/anuragpandey01/tiny-coder/internal/agent"
 	"github.com/anuragpandey01/tiny-coder/internal/agent/events"
 	"github.com/anuragpandey01/tiny-coder/internal/tui/utils"
+	"github.com/anuragpandey01/tiny-coder/internal/tui/widgets"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -39,6 +40,7 @@ type App struct {
 	transcript *tview.TextView   // conversation pane
 	input      *tview.InputField // what the user is typing
 	hint       *tview.TextView   // status line
+	spinner    *widgets.Spinner
 
 	state appState
 	agent agent.Agent
@@ -82,12 +84,14 @@ func NewApp(a agent.Agent) *App {
 	})
 
 	app.hint = tview.NewTextView().SetDynamicColors(true)
+	app.spinner = widgets.NewSpinner(app.tv)
+	app.spinner.Start()
 
 	layout := tview.NewFlex().
 		SetDirection(tview.FlexRow).
 		AddItem(app.transcript, 0, 1, false).
 		AddItem(app.input, 1, 0, true).
-		AddItem(app.hint, 1, 0, false)
+		AddItem(app.spinner, 1, 0, false)
 
 	app.tv.SetRoot(layout, true).
 		SetFocus(app.input).
