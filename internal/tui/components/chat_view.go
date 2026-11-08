@@ -58,6 +58,7 @@ func NewChatView(chat []ChatItem) *ChatView {
 		items: append([]ChatItem(nil), chat...),
 	}
 	c.render()
+	c.transcript.ScrollToEnd()
 	return c
 }
 
@@ -73,6 +74,7 @@ func (c *ChatView) AppendChatItem(item ChatItem) {
 
 // BeginAgentResponse starts a new live response for the current user turn.
 func (c *ChatView) BeginAgentResponse() {
+	c.transcript.ScrollToEnd()
 	if c.currentResponse != "" {
 		c.items = append(c.items, ChatItem{ItemType: ItemTypeAgentResponse, Text: c.currentResponse})
 	}
@@ -132,6 +134,21 @@ func (c *ChatView) Draw(screen tcell.Screen) {
 	c.transcript.Draw(screen)
 }
 
+// InputHandler forwards navigation to the transcript.
+func (c *ChatView) InputHandler() func(*tcell.EventKey, func(tview.Primitive)) {
+	return c.WrapInputHandler(c.transcript.InputHandler())
+}
+
+// MouseHandler supports scrolling without moving focus away from the prompt.
+func (c *ChatView) MouseHandler() func(tview.MouseAction, *tcell.EventMouse, func(tview.Primitive)) (bool, tview.Primitive) {
+	return c.WrapMouseHandler(func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(tview.Primitive)) (bool, tview.Primitive) {
+		if action != tview.MouseScrollUp && action != tview.MouseScrollDown {
+			return false, nil
+		}
+		return c.transcript.MouseHandler()(action, event, setFocus)
+	})
+}
+
 func (c *ChatView) render() {
 	var b strings.Builder
 	for _, item := range c.items {
@@ -169,5 +186,5 @@ func (c *ChatView) render() {
 	if c.agentRunning {
 		b.WriteString(utils.StyledString(style.AgentColorTag, tview.Escape(c.currentResponse)+style.Cursor))
 	}
-	c.transcript.SetText(b.String()).ScrollToEnd()
+	c.transcript.SetText(b.String())
 }

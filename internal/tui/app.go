@@ -45,6 +45,15 @@ func NewApp(a agent.Agent) *App {
 		SetFieldBackgroundColor(style.UserInputBgColor)
 	app.input.SetBackgroundColor(style.UserInputBgColor)
 	app.input.SetBorderPadding(1, 1, 0, 0)
+	app.input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		key := event.Key()
+		if key == tcell.KeyPgUp || key == tcell.KeyPgDn ||
+			(event.Modifiers()&tcell.ModCtrl != 0 && (key == tcell.KeyHome || key == tcell.KeyEnd)) {
+			app.chat.InputHandler()(event, func(p tview.Primitive) { app.tv.SetFocus(p) })
+			return nil
+		}
+		return event
+	})
 
 	app.input.SetDoneFunc(func(key tcell.Key) {
 		prompt := strings.TrimSpace(app.input.GetText())
@@ -87,7 +96,7 @@ func (a *App) Run() error {
 }
 
 func (a *App) render() {
-	a.infoBar.SetInfoBarHint(utils.StyledString(style.HintColorTag, "enter to send · ctrl+c to quit"))
+	a.infoBar.SetInfoBarHint(utils.StyledString(style.HintColorTag, "enter to send · pgup/pgdn to scroll · ctrl+end for latest · ctrl+c to quit"))
 }
 
 func (a *App) onAgentEvent(eventStream <-chan events.Event) {
