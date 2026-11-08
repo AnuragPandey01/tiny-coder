@@ -125,7 +125,7 @@ func (a *OpenAI) Do(prompt string) <-chan events.Event {
 					continue
 				}
 
-				eventStream <- events.ToolStarted{Name: tool.Name(), CallID: tc.CallID}
+				eventStream <- events.ToolStarted{Name: tool.Name(), CallID: tc.CallID, Arguments: tc.Arguments}
 				slog.Debug("Tool Call start", "tool_name", tc.Name, "call_id", tc.CallID, "args", tc.Arguments)
 
 				res, err := tool.Execute(ctx, tc.Arguments)

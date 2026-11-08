@@ -9,8 +9,9 @@ type TextDelta struct {
 }
 
 type ToolStarted struct {
-	Name   string
-	CallID string
+	Name      string
+	CallID    string
+	Arguments string
 }
 
 type ToolFinished struct {

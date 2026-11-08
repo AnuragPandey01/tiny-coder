@@ -1,6 +1,8 @@
 package utils
 
-func StyledString(colorTagBody string, actualString string) string {
+import "github.com/anuragpandey01/tiny-coder/internal/tui/style"
+
+func StyledString(colorTag style.ColorTag, actualString string) string {
 	// tview resets with a single minus [-] inside the closing bracket
-	return "[" + colorTagBody + "]" + actualString + "[-]"
+	return "[" + string(colorTag) + "]" + actualString + "[-]"
 }
