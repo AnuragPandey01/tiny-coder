@@ -21,6 +21,7 @@ func NewSpinner() *Spinner {
 // Tick updates the spinner animation.
 //
 // Usage
+//
 //	spinner := NewSpinner()
 //	app := tview.NewApplication().SetRoot(spinner, true)
 //
