@@ -4,17 +4,17 @@ package events
 // Event is a UI-neutral update emitted during an agent turn.
 type Event any
 
-type TextDelta struct {
+type TextDeltaMsg struct {
 	Text string
 }
 
-type ToolStarted struct {
+type ToolStartedMsg struct {
 	Name      string
 	CallID    string
 	Arguments string
 }
 
-type ToolFinished struct {
+type ToolFinishedMsg struct {
 	Name   string
 	CallID string
 	Result any
@@ -25,4 +25,4 @@ type Error struct {
 	Error string
 }
 
-type TurnFinished struct{}
+type TurnFinishedMsg struct{}

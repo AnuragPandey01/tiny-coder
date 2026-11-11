@@ -10,6 +10,8 @@ import (
 	"github.com/anuragpandey01/tiny-coder/internal/logger"
 	"github.com/anuragpandey01/tiny-coder/internal/tui"
 	"github.com/google/uuid"
+
+	tea "charm.land/bubbletea/v2"
 )
 
 func main() {
@@ -28,7 +30,7 @@ func main() {
 
 	agentRunner := agent.NewOpenAI()
 	app := tui.NewApp(agentRunner)
-	if err := app.Run(); err != nil {
+	if _, err := tea.NewProgram(app).Run(); err != nil {
 		slog.Error("application stopped with error", "error", err)
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)

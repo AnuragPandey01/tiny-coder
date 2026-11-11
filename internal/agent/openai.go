@@ -39,7 +39,7 @@ func (a *OpenAI) Do(prompt string) <-chan events.Event {
 	eventStream := make(chan events.Event)
 	go func() {
 		defer close(eventStream)
-		defer func() { eventStream <- events.TurnFinished{} }()
+		defer func() { eventStream <- events.TurnFinishedMsg{} }()
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		slog.Debug("agent is thinking...", "model", a.model, "prompt_length", len(prompt))
@@ -76,7 +76,7 @@ func (a *OpenAI) Do(prompt string) <-chan events.Event {
 				e := stream.Current()
 				switch e.Type {
 				case "response.output_text.delta":
-					eventStream <- events.TextDelta{Text: e.Delta}
+					eventStream <- events.TextDeltaMsg{Text: e.Delta}
 					responseText.WriteString(e.Delta)
 				case "response.output_item.done":
 					if e.Item.Type == "function_call" {
@@ -125,7 +125,7 @@ func (a *OpenAI) Do(prompt string) <-chan events.Event {
 					continue
 				}
 
-				eventStream <- events.ToolStarted{Name: tool.Name(), CallID: tc.CallID, Arguments: tc.Arguments}
+				eventStream <- events.ToolStartedMsg{Name: tool.Name(), CallID: tc.CallID, Arguments: tc.Arguments}
 				slog.Debug("Tool Call start", "tool_name", tc.Name, "call_id", tc.CallID, "args", tc.Arguments)
 
 				res, err := tool.Execute(ctx, tc.Arguments)
@@ -139,7 +139,7 @@ func (a *OpenAI) Do(prompt string) <-chan events.Event {
 					outputStr = string(outBytes)
 				}
 				slog.Debug("Tool Call completed", "tool_name", tc.Name, "call_id", tc.CallID, "failed", err != nil)
-				eventStream <- events.ToolFinished{Name: tc.Name, CallID: tc.CallID, Result: res, Error: errorString(err)}
+				eventStream <- events.ToolFinishedMsg{Name: tc.Name, CallID: tc.CallID, Result: res, Error: errorString(err)}
 
 				a.appendToolResult(tc, outputStr)
 			}

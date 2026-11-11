@@ -1,123 +1,157 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/textarea"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/anuragpandey01/tiny-coder/internal/agent"
 	"github.com/anuragpandey01/tiny-coder/internal/agent/events"
-	"github.com/anuragpandey01/tiny-coder/internal/tui/components"
-	"github.com/anuragpandey01/tiny-coder/internal/tui/style"
-	"github.com/anuragpandey01/tiny-coder/internal/tui/utils"
-	"github.com/gdamore/tcell/v2"
-	"github.com/rivo/tview"
+	"github.com/anuragpandey01/tiny-coder/internal/tui/components/chatview"
 )
 
 type App struct {
-	tv *tview.Application
+	chatView      chatview.Model
+	textInputView textarea.Model
 
-	chat    *components.ChatView
-	input   *tview.InputField
-	infoBar *components.InfoBar
-	status  *components.StatusBar
+	paddingBottom              int
+	paddingLeft                int
+	paddingRight               int
+	paddingTop                 int
+	width                      int
+	height                     int
+	activeAgentResponseChannel <-chan events.Event
 
 	agent agent.Agent
 }
 
 // NewApp initializes the TUI around an event emitting agent.
 func NewApp(a agent.Agent) *App {
-
-	tview.Styles.PrimitiveBackgroundColor = tcell.ColorDefault
-
 	app := &App{
-		tv:    tview.NewApplication(),
-		agent: a,
+		chatView:      chatview.NewChatView(make([]chatview.ChatItem, 0)),
+		textInputView: textarea.New(),
+
+		paddingBottom: 2,
+		paddingLeft:   1,
+		paddingRight:  1,
+		paddingTop:    0,
+		agent:         a,
 	}
 
-	app.chat = components.NewChatView(nil)
-
-	//user input component
-	app.input = tview.NewInputField().
-		SetLabel("> ").
-		SetPlaceholder("Ask Tinycoder to do anything").
-		SetLabelStyle(tcell.StyleDefault.Foreground(style.UserInputBgColor).Background(style.UserInputBgColor).Bold(true)).
-		SetPlaceholderStyle(tcell.StyleDefault.Background(style.UserInputBgColor)).
-		SetFieldBackgroundColor(style.UserInputBgColor)
-	app.input.SetBackgroundColor(style.UserInputBgColor)
-	app.input.SetBorderPadding(1, 1, 0, 0)
-	app.input.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		key := event.Key()
-		if key == tcell.KeyPgUp || key == tcell.KeyPgDn ||
-			(event.Modifiers()&tcell.ModCtrl != 0 && (key == tcell.KeyHome || key == tcell.KeyEnd)) {
-			app.chat.InputHandler()(event, func(p tview.Primitive) { app.tv.SetFocus(p) })
-			return nil
-		}
-		return event
-	})
-
-	app.input.SetDoneFunc(func(key tcell.Key) {
-		prompt := strings.TrimSpace(app.input.GetText())
-		if key != tcell.KeyEnter || app.chat.IsAgentRunning() || prompt == "" {
-			return
-		}
-		app.chat.AppendChatItem(components.ChatItem{ItemType: components.ItemTypeUserQuery, Text: prompt})
-		app.input.SetText("")
-		app.chat.BeginAgentResponse()
-		app.status.SetAgentWorking()
-		app.render()
-
-		go app.onAgentEvent(app.agent.Do(prompt))
-	})
-
-	app.infoBar = components.NewInfoBar("gemma4:12b-mlx", "~/test", "N/A")
-	app.status = components.NewStatusBar(func(update func()) {
-		app.tv.QueueUpdateDraw(update)
-	})
-
-	layout := tview.NewFlex().
-		SetDirection(tview.FlexRow).
-		AddItem(app.chat, 0, 1, false).
-		AddItem(app.status, 2, 0, false).
-		AddItem(app.input, 3, 0, true).
-		AddItem(app.infoBar, 3, 0, false)
-
-	app.tv.SetRoot(layout, true).
-		SetFocus(app.input).
-		EnablePaste(true).
-		EnableMouse(true)
-
-	app.render()
+	//input styling
+	app.textInputView.Placeholder = "ask tinycoder anything, even if it's not a tiny query!"
+	app.textInputView.Focus()
+	app.textInputView.ShowLineNumbers = false
+	s := textarea.DefaultStyles(true)
+	s.Focused.CursorLine = lipgloss.NewStyle().UnsetBackground()
+	app.textInputView.SetStyles(s)
 
 	return app
 }
 
-func (a *App) Run() error {
-	return a.tv.Run()
+func (a App) Init() tea.Cmd {
+	return textarea.Blink
 }
 
-func (a *App) render() {
-	a.infoBar.SetInfoBarHint(utils.StyledString(style.HintColorTag, "enter to send · pgup/pgdn to scroll · ctrl+end for latest · ctrl+c to quit"))
-}
+func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
-func (a *App) onAgentEvent(eventStream <-chan events.Event) {
-	for event := range eventStream {
-		a.tv.QueueUpdateDraw(func() {
-			a.onEvent(event)
-			a.render()
-		})
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd = []tea.Cmd{}
+	)
+
+	switch msg := msg.(type) {
+
+	case tea.WindowSizeMsg:
+		a.width, a.height = msg.Width, msg.Height
+		a.chatView.SetWidth(msg.Width - a.paddingLeft - a.paddingRight)
+		a.chatView.SetHeight(msg.Height - 3 - a.paddingTop - a.paddingBottom)
+
+		a.textInputView.SetWidth(msg.Width - a.paddingLeft - a.paddingRight)
+		a.textInputView.SetHeight(3)
+		return a, nil
+
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "ctrl+c":
+			return a, tea.Quit
+
+		case "enter":
+			userQuery := strings.TrimSpace(a.textInputView.Value())
+			if userQuery == "" || a.activeAgentResponseChannel != nil {
+				return a, nil
+			}
+
+			a.chatView, cmd = a.chatView.Update(chatview.UserQueryMsg{
+				Text: userQuery,
+			})
+			a.textInputView.Reset()
+
+			a.activeAgentResponseChannel = a.agent.Do(userQuery)
+
+			return a, handleAgentEventStream(a.activeAgentResponseChannel)
+		}
+
+	case events.TextDeltaMsg:
+		a.chatView, cmd = a.chatView.Update(chatview.ResponseDeltaMsg{Text: msg.Text})
+		return a, tea.Batch(cmd, handleAgentEventStream(a.activeAgentResponseChannel))
+
+	case events.Error:
+		a.chatView, cmd = a.chatView.Update(chatview.ResponseErrorMsg{Text: msg.Error})
+		return a, tea.Batch(cmd, handleAgentEventStream(a.activeAgentResponseChannel))
+
+	case events.ToolStartedMsg, events.ToolFinishedMsg:
+		return a, handleAgentEventStream(a.activeAgentResponseChannel)
+
+	case events.TurnFinishedMsg:
+		a.activeAgentResponseChannel = nil
+		a.chatView, cmd = a.chatView.Update(chatview.ResponseFinishedMsg{})
+		return a, cmd
 	}
+
+	a.chatView, cmd = a.chatView.Update(msg)
+	cmds = append(cmds, cmd)
+
+	a.textInputView, cmd = a.textInputView.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return a, tea.Batch(cmds...)
 }
 
-func (a *App) onEvent(event events.Event) {
-	switch event := event.(type) {
-	case events.TextDelta:
-		a.chat.AppendAgentText(event.Text)
-	case events.ToolStarted:
-		a.chat.StartToolCall(event.CallID, event.Name, event.Arguments)
-	case events.ToolFinished:
-		a.chat.FinishToolCall(event.CallID, fmt.Sprint(event.Result), event.Error)
-	case events.TurnFinished:
-		a.chat.FinishAgentResponse()
-		a.status.SetAgentFinishedWorking()
+func (a App) View() tea.View {
+
+	if a.width == 0 || a.height == 0 {
+		v := tea.NewView("")
+		v.AltScreen = true
+		return v
+	}
+
+	body := lipgloss.JoinVertical(
+		lipgloss.Left,
+		a.chatView.View(),
+		a.textInputView.View(),
+	)
+
+	view := tea.NewView(
+		lipgloss.NewStyle().
+			Width(a.width).
+			Height(a.height).
+			Padding(a.paddingTop, a.paddingRight, a.paddingBottom, a.paddingLeft).
+			Render(body),
+	)
+	view.AltScreen = true
+	return view
+}
+
+func handleAgentEventStream(stream <-chan events.Event) tea.Cmd {
+	if stream == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		if msg, ok := <-stream; ok {
+			return msg
+		}
+		return events.TurnFinishedMsg{}
 	}
 }
